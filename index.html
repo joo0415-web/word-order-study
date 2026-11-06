@@ -84,7 +84,7 @@ function toast(msg){var t=h('div',{class:'toast'},msg);document.body.append(t);s
 function copyText(text){
   if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text).then(function(){toast('복사됨')},fb)}
   fb();
-  function fb(){var ta=h('textarea',{});ta.value=text;document.body.append(ta);ta.select();try{document.execCommand('copy');toast('복사됨')}catch(e){toast('복사 실패 - 직접 선택해서 복사하세요')}ta.remove()}
+  function fb(){var ta=h('textarea',{readonly:true,style:'position:fixed;top:0;left:0;opacity:0'});ta.value=text;document.body.append(ta);ta.select();ta.setSelectionRange(0,text.length);try{document.execCommand('copy');toast('복사됨')}catch(e){toast('복사 실패 - 직접 선택해서 복사하세요')}ta.remove()}
 }
 function shuffle(a){a=a.slice();for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=a[i];a[i]=a[j];a[j]=t}return a}
 
@@ -111,10 +111,10 @@ function splitSentences(text){
   t=t.replace(/\b(Mr|Mrs|Ms|Dr|Prof|St|Jr|Sr|vs)\./g,'$1\u0001')
      .replace(/\b([ei])\.([ge])\./gi,'$1\u0001$2\u0001')
      .replace(/\b([A-Z])\.(?=[A-Z]\.)/g,'$1\u0001')
-     .replace(/\.( +)(?=[a-z])/g,'\u0001$1')
+     .replace(/([.?!]+)(["'”’)\]]*)( +)(?=[a-z])/g,function(m,p,q,sp){return p.replace(/\./g,'\u0001').replace(/\?/g,'\u0002').replace(/!/g,'\u0003')+q+sp})
      .replace(/(\d)\.(\d)/g,'$1\u0001$2');
   var parts=t.match(/[^.?!]+(?:[.?!]+["'”’)\]]*|$)/g)||[t];
-  return parts.map(function(s){return s.replace(/\u0001/g,'.').trim()}).filter(Boolean);
+  return parts.map(function(s){return s.replace(/\u0001/g,'.').replace(/\u0002/g,'?').replace(/\u0003/g,'!').trim()}).filter(Boolean);
 }
 
 
@@ -187,12 +187,12 @@ function Teacher(){
         var nc=rows.filter(function(r){return r.chg}).length;
         note='영어 '+en.length+'문장 / 한글 '+ko.length+'문장 → 길이 기준으로 자동 정렬했어요. 파란 칸 '+nc+'곳(합쳐지거나 어긋난 곳)을 확인하세요. ';
       }
-      renderRows(); updateMsg(note);
+      renderRows(); updateMsg(note||'');
     }catch(err){
       msg.textContent='⚠ 오류: '+(err&&err.message?err.message:err)+' (이 메시지를 캡처해서 알려주세요)';
     }
   }
-  function trimRows(){rows.forEach(function(r){r.chg=false});while(rows.length&&!rows[rows.length-1].en&&!rows[rows.length-1].ko) rows.pop()}
+  function trimRows(){while(rows.length&&!rows[rows.length-1].en&&!rows[rows.length-1].ko) rows.pop()}
   function mergeNext(col,i){
     if(i>=rows.length-1) return;
     rows[i][col]=(rows[i][col]+' '+rows[i+1][col]).trim();
@@ -211,7 +211,9 @@ function Teacher(){
     rows[i][col]='';
     trimRows(); renderRows(); updateMsg();
   }
+  var lastNote='';
   function updateMsg(note){
+    if(note!==undefined) lastNote=note; note=lastNote;
     var ne=rows.filter(function(r){return r.en.trim()}).length, nk=rows.filter(function(r){return r.ko.trim()}).length;
     var bad=rows.filter(function(r){return !r.en.trim()||!r.ko.trim()}).length;
     msg.textContent=(note||'')+(bad?'⚠ 비어 있는 칸(노란색)이 '+bad+'곳 있어요.':'✔ 영어 '+ne+'문장 = 한글 '+nk+'문장');
@@ -226,8 +228,8 @@ function Teacher(){
   function renderRows(){
     rowsBox.innerHTML='';
     rows.forEach(function(r,i){
-      var e=h('textarea',{class:'in'+(r.en?'':' empty'),value:r.en,oninput:function(){r.en=e.value}});
-      var k=h('textarea',{class:'in'+(r.ko?'':' empty'),value:r.ko,oninput:function(){r.ko=k.value}});
+      var e=h('textarea',{class:'in'+(r.en.trim()?'':' empty'),value:r.en,oninput:function(){r.en=e.value;e.classList.toggle('empty',!e.value.trim());updateMsg()}});
+      var k=h('textarea',{class:'in'+(r.ko.trim()?'':' empty'),value:r.ko,oninput:function(){r.ko=k.value;k.classList.toggle('empty',!k.value.trim());updateMsg()}});
       rowsBox.append(h('div',{class:'pair'+(r.chg?' chg':'')},
         h('div',{class:'no'},String(i+1)),
         h('div',{},e,tools('en',i)),
@@ -286,7 +288,7 @@ function Student(data){
   var title=data[1]||'본문 배열', name=data[2]||'', pairs=data[3];
   var N=pairs.length, miss=[], i0;
   for(i0=0;i0<N;i0++) miss.push(0);
-  var round=1, queue=[], qi=0, t0=Date.now(), result=null, S=null;
+  var round=1, queue=[], qi=0, t0=Date.now(), result=null, S=null, cur={}, pending=[], review=null;
   for(i0=0;i0<N;i0++) queue.push(i0);
   var root=$('#app');
 
@@ -303,7 +305,7 @@ function Student(data){
     if(S.placed.length===S.toks.length){
       S.bad=[];
       S.placed.forEach(function(pid,p){if(S.toks[pid]!==S.toks[p]) S.bad.push(p)});
-      if(S.bad.length){S.status='wrong'; if(round===1) miss[S.i]++; if(navigator.vibrate) navigator.vibrate(120);}
+      if(S.bad.length){S.status='wrong'; cur[S.i]=(cur[S.i]||0)+1; if(round===1) miss[S.i]++; if(navigator.vibrate) navigator.vibrate(120);}
       else S.status='correct';
     }
     view(S.status==='wrong');
@@ -322,23 +324,27 @@ function Student(data){
       var tm=0,perfect=0,wrongIdx=[];
       miss.forEach(function(m,i){tm+=m;if(m===0)perfect++;else wrongIdx.push(i+1)});
       result={perfect:perfect,total:tm,sec:Math.round((Date.now()-t0)/1000),wrongIdx:wrongIdx};
+      review=null;
+    }else{
+      review={round:round-1,n:queue.length,perfect:queue.filter(function(i){return !cur[i]}).length,
+        wrongIdx:queue.filter(function(i){return cur[i]}).map(function(i){return i+1})};
     }
+    pending=queue.filter(function(i){return cur[i]});
     summary();
   }
   function retry(){
-    var q=[];miss.forEach(function(m,i){if(m>0)q.push(i)});
-    if(!q.length) return;
-    round=2;queue=q;qi=0;load();view(false,true);
+    if(!pending.length) return;
+    round++;queue=pending.slice();cur={};qi=0;load();view(false,true);
   }
   function restart(){
-    miss=miss.map(function(){return 0});round=1;queue=[];for(var i=0;i<N;i++)queue.push(i);qi=0;t0=Date.now();result=null;load();view(false,true);
+    miss=miss.map(function(){return 0});round=1;queue=[];for(var i=0;i<N;i++)queue.push(i);qi=0;t0=Date.now();result=null;review=null;pending=[];cur={};load();view(false,true);
   }
   function speak(t){try{speechSynthesis.cancel();var u=new SpeechSynthesisUtterance(t);u.lang='en-US';u.rate=.9;speechSynthesis.speak(u)}catch(e){}}
 
   function view(shake,top){
     root.innerHTML='';
     var en=pairs[S.i][0], ko=pairs[S.i][1];
-    var pct=Math.round(qi/queue.length*100);
+    var pct=Math.round((qi+(S.status==='correct'?1:0))/queue.length*100);
     var ans=h('div',{class:'ans'+(shake?' shake':'')});
     if(!S.placed.length) ans.append(h('span',{class:'ph'},'아래 단어를 순서대로 눌러요'));
     S.placed.forEach(function(id,p){
@@ -363,7 +369,7 @@ function Student(data){
         h('button',{class:'btn sub',disabled:!S.placed.length,onclick:function(){S.placed=[];S.status='idle';S.bad=[];view()}},'처음부터'));
     }
     root.append(h('div',{class:'wrap'},
-      h('div',{class:'top'},h('div',{class:'t'},title+(round===2?' · 복습':'')),h('div',{class:'p'},(qi+1)+' / '+queue.length)),
+      h('div',{class:'top'},h('div',{class:'t'},title+(round>1?' · '+(round>2?(round-1)+'차 ':'')+'복습':'')),h('div',{class:'p'},(qi+1)+' / '+queue.length)),
       h('div',{class:'bar'},h('i',{style:'width:'+pct+'%'})),
       h('div',{class:'card ko'},ko),
       ans,banner,pool,actions));
@@ -373,7 +379,8 @@ function Student(data){
   function summary(){
     root.innerHTML='';
     var mm=Math.floor(result.sec/60), ss=result.sec%60;
-    var text='['+title+'] '+(name?name+' ':'')+'본문 배열 완료\n첫 시도 정답 '+result.perfect+'/'+N+'\n오답 '+result.total+'회 · '+mm+'분 '+ss+'초'+(result.wrongIdx.length?'\n틀린 문장: '+result.wrongIdx.join(', ')+'번':'');
+    var text='['+title+'] '+(name?name+' ':'')+'본문 배열 완료\n첫 시도 정답 '+result.perfect+'/'+N+'\n오답 '+result.total+'회 · '+mm+'분 '+ss+'초'+(result.wrongIdx.length?'\n틀린 문장: '+result.wrongIdx.join(', ')+'번':'')
+      +(review?'\n'+review.round+'차 복습 '+review.perfect+'/'+review.n+(review.wrongIdx.length?' (남은 문장: '+review.wrongIdx.join(', ')+'번)':' (모두 해결)'):'');
     root.append(h('div',{class:'wrap'},
       h('div',{class:'big'},result.perfect===N?'🎉':'👏'),
       h('h1',{style:'text-align:center'},(name?name+', ':'')+'끝났어요!'),
@@ -381,11 +388,13 @@ function Student(data){
         h('div',{class:'stat'},h('span',{},'첫 시도 정답'),h('b',{},result.perfect+' / '+N)),
         h('div',{class:'stat'},h('span',{},'오답 횟수'),h('b',{},result.total+'회')),
         h('div',{class:'stat'},h('span',{},'걸린 시간'),h('b',{},mm+'분 '+ss+'초')),
-        result.wrongIdx.length?h('div',{class:'stat'},h('span',{},'틀린 문장'),h('b',{},result.wrongIdx.join(', ')+'번')):null),
+        result.wrongIdx.length?h('div',{class:'stat'},h('span',{},'틀린 문장'),h('b',{},result.wrongIdx.join(', ')+'번')):null,
+        review?h('div',{class:'stat'},h('span',{},review.round+'차 복습'),h('b',{},review.perfect+' / '+review.n+(review.wrongIdx.length?'':' ✔'))):null,
+        review&&review.wrongIdx.length?h('div',{class:'stat'},h('span',{},'아직 틀린 문장'),h('b',{},review.wrongIdx.join(', ')+'번')):null),
       h('div',{class:'actions',style:'flex-direction:column'},
-        result.wrongIdx.length?h('button',{class:'btn',onclick:retry},'틀린 문장만 다시 풀기'):null,
+        pending.length?h('button',{class:'btn',onclick:retry},'틀린 문장만 다시 풀기 ('+pending.length+'개)'):null,
         h('button',{class:'btn sub',onclick:function(){
-          if(navigator.share){navigator.share({text:text}).catch(function(){})}else{copyText(text)}
+          if(navigator.share){navigator.share({text:text}).catch(function(e){if(!e||e.name!=='AbortError')copyText(text)})}else{copyText(text)}
         }},'선생님께 결과 보내기'),
         h('button',{class:'btn sub',onclick:restart},'처음부터 다시'))
     ));
@@ -394,6 +403,7 @@ function Student(data){
   load(); view();
 }
 
+window.addEventListener('hashchange',function(){location.reload()});
 var raw=location.hash.replace(/^#/,'');
 if(raw){
   var d=decode(raw);
